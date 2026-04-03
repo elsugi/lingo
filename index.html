@@ -808,6 +808,73 @@
   .phrase-mode-panel { display: none; }
   .phrase-mode-panel.active { display: block; }
 
+  .responses-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .response-block-numbered {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .response-number {
+    background: var(--gold);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .response-content { flex: 1; }
+
+  .response-meaning {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+
+  /* ── DRAG TO REORDER ── */
+  .drag-handle {
+    color: var(--gold-dim);
+    font-size: 14px;
+    cursor: grab;
+    padding: 0 8px 0 0;
+    line-height: 1;
+    flex-shrink: 0;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+  }
+  .drag-handle:hover { opacity: 1; }
+  .drag-handle:active { cursor: grabbing; }
+
+  .card-situation {
+    display: flex;
+    align-items: center;
+  }
+
+  .phrase-card.dragging {
+    opacity: 0.4;
+    transform: scale(0.98);
+  }
+
+  .phrase-card.drag-over {
+    border: 2px solid var(--gold);
+    transform: translateY(-2px);
+  }
+
   .divider { height: 1px; background: #2a2620; margin: 16px 0; }
 
   /* ── NEW SCENARIO INLINE BUTTON ── */
@@ -1251,7 +1318,9 @@
 
     <div class="settings-section">
       <div class="settings-section-title">Data</div>
-      <button class="btn-cancel" id="exportDataBtn" style="width:100%; margin-bottom:10px;">Export All Data (JSON)</button>
+      <button class="btn-cancel" id="exportDataBtn" style="width:100%; margin-bottom:10px;">⬇️ Export Data (JSON)</button>
+      <button class="btn-cancel" id="importDataBtn" style="width:100%; margin-bottom:10px;">⬆️ Import Data (JSON)</button>
+      <input type="file" id="importFileInput" accept=".json" style="display:none;">
       <button class="btn-danger" id="resetDataBtn" style="width:100%;">Reset All Data</button>
     </div>
 
@@ -1451,6 +1520,13 @@ function uid() {
   return 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
 }
 
+// Normalise phrase responses — supports old single format and new array format
+function getResponses(p) {
+  if (Array.isArray(p.responses) && p.responses.length) return p.responses;
+  if (p.responseRomaji) return [{ romaji: p.responseRomaji, jp: p.responseJp || '', meaning: p.responseMeaning || '' }];
+  return [];
+}
+
 // ── SELECTORS ─────────────────────────────────────────────────
 function activeLang() {
   return state.languages.find(l => l.id === state.activeLanguage);
@@ -1545,90 +1621,299 @@ function renderPhrases(filter = '') {
     const card = document.createElement('div');
     card.className = 'phrase-card';
     card.style.animationDelay = (i * 40) + 'ms';
-    card.innerHTML = `
-      <div class="card-situation">${p.situation}</div>
-      <div class="card-body">
-        <div class="phrase-romaji">${p.romaji}</div>
-        ${p.jp ? `<div class="phrase-jp">${p.jp}</div>` : ''}
-        <div class="card-actions">
-          <button class="speak-btn" data-text="${p.jp || p.romaji}" data-lang="ja" title="Pronounce">🔊 Speak</button>
-          <button class="copy-btn" data-copy="${p.romaji}" title="Copy romaji">📋 Copy</button>
-          <button class="delete-btn" data-id="${p.id}" title="Delete">✕</button>
-        </div>
-        ${p.responseRomaji ? `
-        <div class="response-block">
-          <div class="response-label">Expected response</div>
-          <div class="response-romaji">${p.responseRomaji}</div>
-          ${p.responseJp ? `<div class="response-jp">${p.responseJp}</div>` : ''}
-          ${p.responseMeaning ? `<div class="response-romaji" style="color:#888;font-size:14px;margin-top:2px;">↳ ${p.responseMeaning}</div>` : ''}
-          <div class="response-actions">
-            <button class="speak-btn" data-text="${p.responseJp || p.responseRomaji}" data-lang="ja" title="Speak response">🔊 Response</button>
-            <button class="copy-btn" data-copy="${p.responseRomaji}" title="Copy response">📋 Copy</button>
-          </div>
-        </div>` : ''}
-      </div>
-    `;
+    card.draggable = true;
+    card.dataset.id = p.id;
+
+    const responses = getResponses(p);
+
+    // Drag handle
+    const handle = document.createElement('div');
+    handle.className = 'drag-handle';
+    handle.innerHTML = '⠿';
+    handle.title = 'Drag to reorder';
+
+    // Build card structure with DOM, not innerHTML, to avoid attribute escaping issues
+    const situation = document.createElement('div');
+    situation.className = 'card-situation';
+    situation.appendChild(handle);
+    const situationText = document.createElement('span');
+    situationText.textContent = p.situation;
+    situation.appendChild(situationText);
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+
+    const romaji = document.createElement('div');
+    romaji.className = 'phrase-romaji';
+    romaji.textContent = p.romaji;
+    body.appendChild(romaji);
+
+    if (p.jp) {
+      const jp = document.createElement('div');
+      jp.className = 'phrase-jp';
+      jp.textContent = p.jp;
+      body.appendChild(jp);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+
+    const speakBtn = document.createElement('button');
+    speakBtn.className = 'speak-btn';
+    speakBtn.textContent = '🔊 Speak';
+    speakBtn.onclick = () => speakWithFallback(p.jp, p.romaji, speakBtn);
+    actions.appendChild(speakBtn);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.textContent = '📋 Copy';
+    copyBtn.onclick = () => copyText(p.romaji, copyBtn);
+    actions.appendChild(copyBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.textContent = '✕';
+    delBtn.onclick = () => deletePhrase(p.id);
+    actions.appendChild(delBtn);
+
+    body.appendChild(actions);
+
+    // Responses
+    if (responses.length) {
+      const section = document.createElement('div');
+      section.className = 'responses-section';
+
+      const label = document.createElement('div');
+      label.className = 'response-label';
+      label.textContent = `Expected response${responses.length > 1 ? 's' : ''}`;
+      section.appendChild(label);
+
+      responses.forEach((r, ri) => {
+        const block = document.createElement('div');
+        block.className = 'response-block' + (responses.length > 1 ? ' response-block-numbered' : '');
+
+        if (responses.length > 1) {
+          const num = document.createElement('div');
+          num.className = 'response-number';
+          num.textContent = ri + 1;
+          block.appendChild(num);
+        }
+
+        const content = document.createElement('div');
+        content.className = 'response-content';
+
+        const rRomaji = document.createElement('div');
+        rRomaji.className = 'response-romaji';
+        rRomaji.textContent = r.romaji;
+        content.appendChild(rRomaji);
+
+        if (r.jp) {
+          const rJp = document.createElement('div');
+          rJp.className = 'response-jp';
+          rJp.textContent = r.jp;
+          content.appendChild(rJp);
+        }
+
+        if (r.meaning) {
+          const rMeaning = document.createElement('div');
+          rMeaning.className = 'response-meaning';
+          rMeaning.textContent = '↳ ' + r.meaning;
+          content.appendChild(rMeaning);
+        }
+
+        const rActions = document.createElement('div');
+        rActions.className = 'response-actions';
+
+        const rSpeak = document.createElement('button');
+        rSpeak.className = 'speak-btn';
+        rSpeak.textContent = '🔊';
+        rSpeak.onclick = () => speakWithFallback(r.jp, r.romaji, rSpeak);
+        rActions.appendChild(rSpeak);
+
+        const rCopy = document.createElement('button');
+        rCopy.className = 'copy-btn';
+        rCopy.textContent = '📋 Copy';
+        rCopy.onclick = () => copyText(r.romaji, rCopy);
+        rActions.appendChild(rCopy);
+
+        content.appendChild(rActions);
+        block.appendChild(content);
+        section.appendChild(block);
+      });
+
+      body.appendChild(section);
+    }
+
+    card.appendChild(situation);
+    card.appendChild(body);
     list.appendChild(card);
   });
 
-  // Bind card events
-  list.querySelectorAll('.speak-btn').forEach(btn => {
-    btn.onclick = () => speak(btn.dataset.text, btn.dataset.lang, btn);
-  });
-  list.querySelectorAll('.copy-btn').forEach(btn => {
-    btn.onclick = () => copyText(btn.dataset.copy, btn);
-  });
-  list.querySelectorAll('.delete-btn').forEach(btn => {
-    btn.onclick = () => deletePhrase(btn.dataset.id);
+  // ── DRAG TO REORDER (mouse + touch) ──
+  let dragSrc = null;
+  let touchClone = null;
+  let touchOffsetY = 0;
+
+  function saveOrder() {
+    const scenario = activeScenario();
+    if (!scenario) return;
+    const newOrder = [...list.querySelectorAll('.phrase-card')].map(c => c.dataset.id);
+    scenario.phrases.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
+    saveState();
+  }
+
+  function getCardAtY(y) {
+    return [...list.querySelectorAll('.phrase-card:not(.dragging)')].find(c => {
+      const r = c.getBoundingClientRect();
+      return y >= r.top && y <= r.bottom;
+    });
+  }
+
+  list.querySelectorAll('.phrase-card').forEach(card => {
+    const handle = card.querySelector('.drag-handle');
+
+    // ── MOUSE DRAG ──
+    card.addEventListener('dragstart', e => {
+      dragSrc = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      list.querySelectorAll('.phrase-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (card !== dragSrc) {
+        list.querySelectorAll('.phrase-card').forEach(c => c.classList.remove('drag-over'));
+        card.classList.add('drag-over');
+      }
+    });
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === card) return;
+      card.classList.remove('drag-over');
+      const cards = [...list.querySelectorAll('.phrase-card')];
+      if (cards.indexOf(dragSrc) < cards.indexOf(card)) {
+        list.insertBefore(dragSrc, card.nextSibling);
+      } else {
+        list.insertBefore(dragSrc, card);
+      }
+      saveOrder();
+    });
+
+    // ── TOUCH DRAG (handle only) ──
+    if (handle) {
+      handle.addEventListener('touchstart', e => {
+        e.preventDefault();
+        dragSrc = card;
+        const touch = e.touches[0];
+        const rect = card.getBoundingClientRect();
+        touchOffsetY = touch.clientY - rect.top;
+
+        // Create floating clone
+        touchClone = card.cloneNode(true);
+        touchClone.style.cssText = `
+          position: fixed; z-index: 999; width: ${rect.width}px;
+          left: ${rect.left}px; top: ${rect.top}px;
+          opacity: 0.85; pointer-events: none;
+          box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+          transform: scale(1.02);
+          transition: none;
+        `;
+        document.body.appendChild(touchClone);
+        card.classList.add('dragging');
+      }, { passive: false });
+
+      handle.addEventListener('touchmove', e => {
+        e.preventDefault();
+        if (!touchClone || !dragSrc) return;
+        const touch = e.touches[0];
+        touchClone.style.top = (touch.clientY - touchOffsetY) + 'px';
+
+        list.querySelectorAll('.phrase-card').forEach(c => c.classList.remove('drag-over'));
+        const target = getCardAtY(touch.clientY);
+        if (target && target !== dragSrc) target.classList.add('drag-over');
+      }, { passive: false });
+
+      handle.addEventListener('touchend', e => {
+        if (!dragSrc) return;
+        const touch = e.changedTouches[0];
+        const target = getCardAtY(touch.clientY);
+
+        if (touchClone) { touchClone.remove(); touchClone = null; }
+        dragSrc.classList.remove('dragging');
+        list.querySelectorAll('.phrase-card').forEach(c => c.classList.remove('drag-over'));
+
+        if (target && target !== dragSrc) {
+          const cards = [...list.querySelectorAll('.phrase-card')];
+          if (cards.indexOf(dragSrc) < cards.indexOf(target)) {
+            list.insertBefore(dragSrc, target.nextSibling);
+          } else {
+            list.insertBefore(dragSrc, target);
+          }
+          saveOrder();
+          showToast('Order saved');
+        }
+        dragSrc = null;
+      });
+    }
   });
 }
 
 // ── SPEAK ─────────────────────────────────────────────────────
 let currentAudio = null;
 
+// Tries JP characters first, falls back to romaji if no JP voice
+function speakWithFallback(jpText, romajiText, btn) {
+  speak(jpText || romajiText, 'ja', btn);
+}
+
 function speak(text, lang = 'ja', btn = null) {
-  // Stop anything currently playing
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  if (!text) return;
+
   if (window._activeSpeakBtn) { window._activeSpeakBtn.classList.remove('speaking'); }
+  if (window._currentAudio) { window._currentAudio.pause(); window._currentAudio = null; }
 
-  // Use Japanese characters if available (better pronunciation), else romaji
   const ttsLang = lang.startsWith('ja') ? 'ja' : lang;
-
-  // Google Translate TTS — much better quality than browser voices
-  const encoded = encodeURIComponent(text);
-  const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${ttsLang}&client=gtx&ttsspeed=0.8`;
+  const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${ttsLang}&client=gtx&ttsspeed=0.8`;
 
   const audio = new Audio(url);
-  currentAudio = audio;
+  window._currentAudio = audio;
 
   if (btn) {
     btn.classList.add('speaking');
     window._activeSpeakBtn = btn;
-    audio.onended  = () => { btn.classList.remove('speaking'); currentAudio = null; };
-    audio.onerror  = () => {
-      btn.classList.remove('speaking');
-      currentAudio = null;
-      // Fallback to browser TTS if Google fails (e.g. offline)
-      browserSpeak(text, lang.startsWith('ja') ? 'ja-JP' : lang, btn);
-    };
   }
 
-  audio.play().catch(() => {
-    // Autoplay blocked or offline — fall back
+  audio.onended = () => {
     if (btn) btn.classList.remove('speaking');
+    window._currentAudio = null;
+  };
+
+  audio.onerror = () => {
+    if (btn) btn.classList.remove('speaking');
+    window._currentAudio = null;
+    // Fall back to browser TTS
+    browserSpeak(text, lang.startsWith('ja') ? 'ja-JP' : lang, btn);
+  };
+
+  audio.play().catch(() => {
+    if (btn) btn.classList.remove('speaking');
+    window._currentAudio = null;
     browserSpeak(text, lang.startsWith('ja') ? 'ja-JP' : lang, btn);
   });
 }
 
 function browserSpeak(text, lang = 'ja-JP', btn = null) {
-  if (!('speechSynthesis' in window)) { showToast('Speech not supported'); return; }
+  if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(text);
   utt.lang = lang;
   utt.rate = 0.85;
   if (btn) {
     btn.classList.add('speaking');
-    utt.onend  = () => btn.classList.remove('speaking');
+    utt.onend   = () => btn.classList.remove('speaking');
     utt.onerror = () => btn.classList.remove('speaking');
   }
   window.speechSynthesis.speak(utt);
@@ -1703,7 +1988,7 @@ document.getElementById('aiGenerateBtn').onclick = async () => {
     document.getElementById('aiGenerateBtn').disabled = true;
     try {
       const prompt = `You are a travel phrase assistant. The user is in a "${scenario?.name || 'travel'}" scenario and wants to say: "${query}". Generate exactly ONE phrase. Return ONLY a valid JSON object (no markdown):
-{"situation":"short English label","romaji":"phrase in romaji","jp":"phrase in target script","responseRomaji":"typical response romaji","responseJp":"response in target script","responseMeaning":"English meaning of response"}`;
+{"situation":"short English label","romaji":"phrase in romaji","jp":"phrase in target script","responses":[{"romaji":"response 1 romaji","jp":"response 1 script","meaning":"English meaning"},{"romaji":"response 2 romaji","jp":"response 2 script","meaning":"English meaning"}]}`;
       const raw = await callClaude(claudeKey, prompt);
       pendingAiPhrase = JSON.parse(raw);
     } catch(e) {
@@ -1756,7 +2041,7 @@ document.getElementById('parsePhrasesBtn').onclick = async () => {
     document.getElementById('parsePhrasesBtn').disabled = true;
     try {
       const scenario = activeScenario();
-      const prompt = `Extract ALL travel phrases from the following text. It may be a table, list, or conversation. Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responseRomaji","responseJp","responseMeaning". Infer missing fields from context. Scenario: "${scenario?.name || 'travel'}".
+      const prompt = `Extract ALL travel phrases from the following text. It may be a table, list, or conversation. Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responses" (array of objects each with "romaji","jp","meaning" — include 1-3 likely responses per phrase). Infer missing fields. Scenario: "${scenario?.name || 'travel'}".
 
 Text:
 ${text}`;
@@ -2004,7 +2289,7 @@ document.getElementById('parseBtn').onclick = async () => {
     status.innerHTML = '<span class="spinner"></span>Parsing with AI...';
     document.getElementById('parseBtn').disabled = true;
     try {
-      const prompt = `Extract ALL travel phrases from the following text. Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responseRomaji","responseJp","responseMeaning". No markdown.
+      const prompt = `Extract ALL travel phrases from the following text. Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responses" (array of 1-3 objects each with "romaji","jp","meaning"). No markdown.
 
 Text:
 ${text}`;
@@ -2037,7 +2322,7 @@ document.getElementById('generateBtn').onclick = async () => {
   document.getElementById('generateBtn').disabled = true;
 
   try {
-    const fullPrompt = `Generate 4-8 useful travel phrases for: "${prompt}". Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responseRomaji","responseJp","responseMeaning". No markdown.`;
+    const fullPrompt = `Generate 4-8 useful travel phrases for: "${prompt}". Return ONLY a JSON array, each object with keys: "situation","romaji","jp","responses" (array of 1-3 objects each with "romaji","jp","meaning"). No markdown.`;
     const raw = await callClaude(claudeKey, fullPrompt);
     promptPhrases = JSON.parse(raw);
     renderParsedPreview('promptPreview', promptPhrases);
@@ -2141,7 +2426,7 @@ Return ONLY valid JSON in this exact format (no markdown, no explanation):
     { "original": "Japanese text", "romaji": "romaji", "meaning": "English meaning" }
   ],
   "phrases": [
-    { "situation": "short label", "romaji": "romaji", "jp": "Japanese", "responseRomaji": "", "responseJp": "", "responseMeaning": "" }
+    { "situation": "short label", "romaji": "romaji", "jp": "Japanese", "responses": [{"romaji": "", "jp": "", "meaning": ""}] }
   ]
 }
 
@@ -2261,28 +2546,30 @@ async function callGemini(key, prompt) {
 }
 
 function buildParsePrompt(text) {
-  return `You are a travel phrase extraction assistant. Extract Japanese travel phrases from the following text and return ONLY a valid JSON array. Each object must have these exact keys: "situation", "romaji", "jp", "responseRomaji", "responseJp", "responseMeaning". If a field is unavailable, use an empty string. Do not include any explanation or markdown, only the JSON array.
+  return `You are a travel phrase extraction assistant. Extract travel phrases from the following text and return ONLY a valid JSON array. Each object must have these exact keys: "situation", "romaji", "jp", "responses". "responses" is an array of objects each with "romaji", "jp", "meaning". Include 1-3 likely responses per phrase. If unavailable use empty string/array. No explanation or markdown.
 
 Text to parse:
 ${text}`;
 }
 
 function buildGeneratePrompt(userRequest) {
-  return `You are a Japanese travel phrase generator. Generate useful Japanese travel phrases for the following scenario. Return ONLY a valid JSON array with 4-8 objects. Each object must have these exact keys: "situation", "romaji", "jp", "responseRomaji", "responseJp", "responseMeaning". "situation" should be a short English label (e.g. "Asking for spice level"). "romaji" is the romanized pronunciation. "jp" is the Japanese script. "responseRomaji" is the typical response in romaji. "responseJp" is the response in Japanese. "responseMeaning" is the English meaning of the response. Do not include any explanation or markdown, only the JSON array.
+  return `You are a travel phrase generator. Generate 4-8 useful travel phrases for the following scenario. Return ONLY a valid JSON array. Each object must have: "situation" (short English label), "romaji" (phrase in romaji), "jp" (phrase in target script), "responses" (array of 1-3 likely responses, each with "romaji", "jp", "meaning"). No explanation or markdown.
 
 Scenario: ${userRequest}`;
 }
 
 function renderParsedPreview(containerId, phrases) {
   const container = document.getElementById(containerId);
-  container.innerHTML = phrases.map(p => `
+  container.innerHTML = phrases.map(p => {
+    const responses = getResponses(p);
+    return `
     <div class="parsed-item">
       <div class="pi-situation">${p.situation}</div>
       <div class="pi-romaji">${p.romaji}</div>
       <div class="pi-jp">${p.jp || ''}</div>
-      ${p.responseRomaji ? `<div class="pi-romaji" style="color:#888;font-size:11px;margin-top:2px;">↳ ${p.responseRomaji} — ${p.responseMeaning}</div>` : ''}
-    </div>
-  `).join('');
+      ${responses.map(r => `<div class="pi-romaji" style="color:#888;font-size:11px;margin-top:2px;">↳ ${r.romaji}${r.meaning ? ' — ' + r.meaning : ''}</div>`).join('')}
+    </div>`;
+  }).join('');
 }
 
 // ── LOCAL TEXT PARSER ─────────────────────────────────────────
@@ -2374,13 +2661,18 @@ function makePhrase(youSay, response, meaning) {
   youSay   = clean(youSay);
   response = clean(response);
   meaning  = clean(meaning);
+
+  const responses = [];
+  const rRomaji = extractRomaji(response);
+  if (rRomaji) {
+    responses.push({ romaji: rRomaji, jp: extractJp(response), meaning: meaning || extractMeaning(response) });
+  }
+
   return {
-    situation:       extractSituation(youSay),
-    romaji:          extractRomaji(youSay),
-    jp:              extractJp(youSay),
-    responseRomaji:  extractRomaji(response),
-    responseJp:      extractJp(response),
-    responseMeaning: meaning || extractMeaning(response),
+    situation: extractSituation(youSay),
+    romaji:    extractRomaji(youSay),
+    jp:        extractJp(youSay),
+    responses,
   };
 }
 
@@ -2477,6 +2769,60 @@ document.getElementById('saveApiKeyBtn').onclick = () => {
   document.getElementById('fApiKey').value = '';
   document.getElementById('apiKeyDisplay').textContent = key.slice(0, 8) + '••••••••••••••••';
   showToast('Gemini key saved');
+};
+
+document.getElementById('importDataBtn').onclick = () => {
+  document.getElementById('importFileInput').click();
+};
+
+document.getElementById('importFileInput').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const imported = JSON.parse(ev.target.result);
+      // Validate it looks like Lingo data
+      if (!imported.languages || !Array.isArray(imported.languages)) {
+        showToast('Invalid Lingo JSON file');
+        return;
+      }
+      if (!confirm(`Import ${imported.languages.length} language(s)? This will merge with your current data.`)) return;
+
+      // Merge — add languages that don't already exist, merge scenarios
+      imported.languages.forEach(importedLang => {
+        const existing = state.languages.find(l => l.id === importedLang.id);
+        if (!existing) {
+          state.languages.push(importedLang);
+        } else {
+          // Merge scenarios
+          importedLang.scenarios?.forEach(importedScenario => {
+            const existingScenario = existing.scenarios?.find(s => s.id === importedScenario.id);
+            if (!existingScenario) {
+              existing.scenarios = existing.scenarios || [];
+              existing.scenarios.push(importedScenario);
+            } else {
+              // Merge phrases — skip duplicates by id
+              const existingIds = new Set(existingScenario.phrases?.map(p => p.id) || []);
+              importedScenario.phrases?.forEach(p => {
+                if (!existingIds.has(p.id)) existingScenario.phrases.push(p);
+              });
+            }
+          });
+        }
+      });
+
+      saveState();
+      closeOverlay('settingsOverlay');
+      render();
+      showToast('Data imported successfully');
+    } catch(err) {
+      showToast('Failed to parse JSON file');
+    }
+    // Reset input so same file can be re-imported
+    e.target.value = '';
+  };
+  reader.readAsText(file);
 };
 
 document.getElementById('exportDataBtn').onclick = () => {
