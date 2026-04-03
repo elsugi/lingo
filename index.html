@@ -1083,18 +1083,11 @@
         <label class="field-label">Japanese (optional)</label>
         <input class="field-input" id="fJp" placeholder="e.g. テーブルをお願いします">
       </div>
-      <div class="field-group">
-        <label class="field-label">Response — Romaji</label>
-        <input class="field-input" id="fResponseRomaji" placeholder="e.g. Nan-mei-sama desu ka?">
-      </div>
-      <div class="field-group">
-        <label class="field-label">Response — Japanese (optional)</label>
-        <input class="field-input" id="fResponseJp" placeholder="e.g. 何名様ですか？">
-      </div>
-      <div class="field-group">
-        <label class="field-label">Response meaning</label>
-        <input class="field-input" id="fResponseMeaning" placeholder="e.g. How many in your party?">
-      </div>
+
+      <div class="field-label" style="margin-bottom:8px;">EXPECTED RESPONSES</div>
+      <div id="fResponsesList"></div>
+      <button class="btn-cancel" id="addResponseBtn" style="width:100%;margin-bottom:16px;font-size:12px;">＋ Add another response</button>
+
       <div class="sheet-actions">
         <button class="btn-cancel" id="phraseCancelBtn2">Cancel</button>
         <button class="btn-save" id="phraseSaveBtn2">Save Phrase</button>
@@ -1670,6 +1663,13 @@ function renderPhrases(filter = '') {
     copyBtn.onclick = () => copyText(p.romaji, copyBtn);
     actions.appendChild(copyBtn);
 
+    const editBtn = document.createElement('button');
+    editBtn.className = 'copy-btn';
+    editBtn.textContent = '✏️';
+    editBtn.title = 'Edit phrase';
+    editBtn.onclick = () => openEditPhrase(p);
+    actions.appendChild(editBtn);
+
     const delBtn = document.createElement('button');
     delBtn.className = 'delete-btn';
     delBtn.textContent = '✕';
@@ -1948,8 +1948,8 @@ function openAddPhrase() {
   pendingPastedPhrases = [];
   document.getElementById('phraseSheetTitle').textContent = 'Add Phrase';
   document.getElementById('phraseSheetSub').textContent = activeScenario()?.name || '';
+  document.getElementById('phraseModeTabs').style.display = 'flex';
 
-  // Reset to type mode
   switchPhraseMode('type');
   document.getElementById('fAiQuery').value = '';
   document.getElementById('phraseAiStatus').textContent = '';
@@ -1959,10 +1959,104 @@ function openAddPhrase() {
   document.getElementById('pastePhrasesStatus').textContent = '';
   document.getElementById('pastePreviewWrap').style.display = 'none';
   document.getElementById('pasteImportActions').style.display = 'none';
-  ['fSituation','fRomaji','fJp','fResponseRomaji','fResponseJp','fResponseMeaning'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('fSituation').value = '';
+  document.getElementById('fRomaji').value = '';
+  document.getElementById('fJp').value = '';
+  buildResponseFields([]);
 
   openOverlay('phraseOverlay');
 }
+
+function openEditPhrase(p) {
+  editingPhraseId = p.id;
+  document.getElementById('phraseSheetTitle').textContent = 'Edit Phrase';
+  document.getElementById('phraseSheetSub').textContent = activeScenario()?.name || '';
+  // Hide mode tabs — go straight to manual
+  document.getElementById('phraseModeTabs').style.display = 'none';
+  switchPhraseMode('manual');
+
+  document.getElementById('fSituation').value = p.situation || '';
+  document.getElementById('fRomaji').value = p.romaji || '';
+  document.getElementById('fJp').value = p.jp || '';
+  buildResponseFields(getResponses(p));
+
+  openOverlay('phraseOverlay');
+}
+
+// Build dynamic response fields
+function buildResponseFields(responses) {
+  const list = document.getElementById('fResponsesList');
+  list.innerHTML = '';
+  const initial = responses.length ? responses : [{ romaji: '', jp: '', meaning: '' }];
+  initial.forEach(r => addResponseField(r));
+}
+
+function addResponseField(r = {}) {
+  const list = document.getElementById('fResponsesList');
+  const idx = list.children.length;
+  const wrap = document.createElement('div');
+  wrap.className = 'response-field-group';
+  wrap.style.cssText = 'background:#0f0e0c;border:1px solid #2a2620;border-radius:10px;padding:12px;margin-bottom:10px;position:relative;';
+
+  if (idx > 0) {
+    const rm = document.createElement('button');
+    rm.textContent = '✕';
+    rm.style.cssText = 'position:absolute;top:8px;right:8px;background:none;border:none;color:#666;cursor:pointer;font-size:14px;';
+    rm.onclick = () => { wrap.remove(); };
+    wrap.appendChild(rm);
+  }
+
+  const label = document.createElement('div');
+  label.className = 'field-label';
+  label.textContent = idx === 0 ? 'RESPONSE 1' : `RESPONSE ${idx + 1}`;
+  label.style.marginBottom = '8px';
+  wrap.appendChild(label);
+
+  ['romaji','jp','meaning'].forEach(field => {
+    const input = document.createElement('input');
+    input.className = 'field-input response-field-input';
+    input.dataset.field = field;
+    input.value = r[field] || '';
+    input.placeholder = field === 'romaji' ? 'e.g. Kashikomarimashita' : field === 'jp' ? 'e.g. 畏まりました' : 'e.g. Right away';
+    input.style.marginBottom = '8px';
+    wrap.appendChild(input);
+  });
+
+  list.appendChild(wrap);
+}
+
+function getManualResponses() {
+  return [...document.querySelectorAll('#fResponsesList .response-field-group')].map(wrap => ({
+    romaji:  wrap.querySelector('[data-field="romaji"]')?.value.trim() || '',
+    jp:      wrap.querySelector('[data-field="jp"]')?.value.trim() || '',
+    meaning: wrap.querySelector('[data-field="meaning"]')?.value.trim() || '',
+  })).filter(r => r.romaji);
+}
+
+document.getElementById('addResponseBtn').onclick = () => addResponseField();
+
+// ── MANUAL MODE ───────────────────────────────────────────────
+document.getElementById('phraseCancelBtn2').onclick = () => closeOverlay('phraseOverlay');
+document.getElementById('phraseSaveBtn2').onclick = () => {
+  const scenario = activeScenario();
+  if (!scenario) return;
+  const phrase = {
+    id: editingPhraseId || uid(),
+    situation: document.getElementById('fSituation').value.trim(),
+    romaji: document.getElementById('fRomaji').value.trim(),
+    jp: document.getElementById('fJp').value.trim(),
+    responses: getManualResponses(),
+  };
+  if (!phrase.romaji) { showToast('Romaji is required'); return; }
+  if (editingPhraseId) {
+    const idx = scenario.phrases.findIndex(p => p.id === editingPhraseId);
+    if (idx !== -1) scenario.phrases[idx] = phrase;
+  } else {
+    scenario.phrases.push(phrase);
+  }
+  saveState(); closeOverlay('phraseOverlay'); renderPhrases();
+  showToast(editingPhraseId ? 'Phrase updated' : 'Phrase added');
+};
 
 function switchPhraseMode(mode) {
   document.querySelectorAll('.phrase-mode-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
@@ -2076,31 +2170,6 @@ document.getElementById('importPastedPhrasesBtn').onclick = () => {
 };
 
 document.getElementById('pasteCancelBtn').onclick = () => closeOverlay('phraseOverlay');
-
-// ── MANUAL MODE ───────────────────────────────────────────────
-document.getElementById('phraseCancelBtn2').onclick = () => closeOverlay('phraseOverlay');
-document.getElementById('phraseSaveBtn2').onclick = () => {
-  const scenario = activeScenario();
-  if (!scenario) return;
-  const phrase = {
-    id: editingPhraseId || uid(),
-    situation: document.getElementById('fSituation').value.trim(),
-    romaji: document.getElementById('fRomaji').value.trim(),
-    jp: document.getElementById('fJp').value.trim(),
-    responseRomaji: document.getElementById('fResponseRomaji').value.trim(),
-    responseJp: document.getElementById('fResponseJp').value.trim(),
-    responseMeaning: document.getElementById('fResponseMeaning').value.trim(),
-  };
-  if (!phrase.romaji) { showToast('Romaji is required'); return; }
-  if (editingPhraseId) {
-    const idx = scenario.phrases.findIndex(p => p.id === editingPhraseId);
-    if (idx !== -1) scenario.phrases[idx] = phrase;
-  } else {
-    scenario.phrases.push(phrase);
-  }
-  saveState(); closeOverlay('phraseOverlay'); renderPhrases();
-  showToast(editingPhraseId ? 'Phrase updated' : 'Phrase added');
-};
 
 // ── ADD SCENARIO ──────────────────────────────────────────────
 document.getElementById('scenarioCancelBtn').onclick = () => closeOverlay('scenarioOverlay');
