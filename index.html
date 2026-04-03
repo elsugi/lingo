@@ -2490,27 +2490,10 @@ function renderCameraResult(result) {
 }
 
 // ── CLAUDE API CALL ───────────────────────────────────────────
-async function callClaude(prompt) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message || `API error ${res.status}`);
-  }
-  const data = await res.json();
-  const raw = data.content?.[0]?.text || '';
-  return raw.replace(/```json|```/g, '').trim();
-}
+// (defined earlier as callClaude(key, prompt) — this section intentionally left clear)
 
-async function callClaudeArray(prompt) {
-  const raw = await callClaude(prompt);
+async function callClaudeArray(key, prompt) {
+  const raw = await callClaude(key, prompt);
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) throw new Error('Unexpected response format');
   return parsed;
@@ -2754,7 +2737,7 @@ document.getElementById('testClaudeKeyBtn').onclick = async () => {
   if (!key) { status.textContent = '✗ No Claude key saved'; return; }
   status.innerHTML = '<span class="spinner"></span>Testing...';
   try {
-    const raw = await callClaude(key, 'Reply with exactly: {"ok":true}');
+    const raw = await callClaude(key, 'Return exactly this JSON: {"ok":true}');
     const parsed = JSON.parse(raw);
     status.textContent = parsed.ok ? '✓ Claude API working!' : '✓ Connected (unexpected response)';
   } catch(e) {
