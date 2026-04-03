@@ -167,18 +167,26 @@
     position: sticky;
     top: calc(env(safe-area-inset-top, 12px) + 100px);
     z-index: 90;
+    -webkit-overflow-scrolling: touch;
   }
 
   .scenario-bar::-webkit-scrollbar { display: none; }
+
+  .scenario-tab-wrap {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
 
   .scenario-tab {
     flex-shrink: 0;
     background: none;
     border: none;
     color: #666;
-    padding: 12px 16px;
-     font-family: "Recursive", sans-serif;
-     font-weight: 700;
+    padding: 12px 12px 12px 16px;
+    font-family: "Recursive", sans-serif;
+    font-weight: 700;
     font-size: 16px;
     cursor: pointer;
     border-bottom: 2px solid transparent;
@@ -192,6 +200,26 @@
   }
 
   .scenario-tab:hover:not(.active) { color: #aaa; }
+
+  .scenario-tab-delete {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 8px 4px 2px;
+    line-height: 1;
+    transition: color 0.15s;
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .scenario-tab-delete:hover { color: #c0392b; }
+
+  .scenario-tab-wrap:hover .scenario-tab-delete { color: #c0392b; }
+
+  .scenario-tab-wrap.dragging-tab { opacity: 0.4; }
+  .scenario-tab-wrap.drag-over-tab { border-left: 2px solid var(--gold); }
 
   .scenario-add-tab {
     flex-shrink: 0;
@@ -1559,13 +1587,140 @@ function renderScenarioTabs() {
   bar.innerHTML = '';
   const lang = activeLang();
   if (!lang) return;
+
+  let tabDragSrc = null;
+
   lang.scenarios.forEach(s => {
+    const wrap = document.createElement('div');
+    wrap.className = 'scenario-tab-wrap';
+    wrap.draggable = true;
+    wrap.dataset.id = s.id;
+
     const btn = document.createElement('button');
     btn.className = 'scenario-tab' + (s.id === state.activeScenario ? ' active' : '');
     btn.textContent = s.name;
     btn.onclick = () => { state.activeScenario = s.id; saveState(); renderScenarioTabs(); renderPhrases(); };
-    bar.appendChild(btn);
+
+    // Long press to show delete on mobile
+    let pressTimer;
+    btn.addEventListener('touchstart', () => {
+      pressTimer = setTimeout(() => { wrap.classList.toggle('show-delete'); }, 500);
+    }, { passive: true });
+    btn.addEventListener('touchend', () => clearTimeout(pressTimer));
+    btn.addEventListener('touchmove', () => clearTimeout(pressTimer));
+
+    const del = document.createElement('button');
+    del.className = 'scenario-tab-delete';
+    del.textContent = '✕';
+    del.title = 'Delete scenario';
+    del.onclick = (e) => {
+      e.stopPropagation();
+      // Two-tap confirmation — first tap shows warning, second tap deletes
+      if (del.dataset.confirming === 'true') {
+        lang.scenarios = lang.scenarios.filter(sc => sc.id !== s.id);
+        if (state.activeScenario === s.id) {
+          state.activeScenario = lang.scenarios[0]?.id || null;
+        }
+        saveState();
+        render();
+        showToast(`"${s.name}" deleted`);
+      } else {
+        del.dataset.confirming = 'true';
+        del.textContent = '✓?';
+        del.style.color = '#c0392b';
+        setTimeout(() => {
+          del.dataset.confirming = 'false';
+          del.textContent = '✕';
+          del.style.color = '';
+        }, 2000);
+      }
+    };
+
+    // ── TAB DRAG (mouse) ──
+    wrap.addEventListener('dragstart', e => {
+      tabDragSrc = wrap;
+      wrap.classList.add('dragging-tab');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    wrap.addEventListener('dragend', () => {
+      wrap.classList.remove('dragging-tab');
+      bar.querySelectorAll('.scenario-tab-wrap').forEach(w => w.classList.remove('drag-over-tab'));
+    });
+    wrap.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (wrap !== tabDragSrc) {
+        bar.querySelectorAll('.scenario-tab-wrap').forEach(w => w.classList.remove('drag-over-tab'));
+        wrap.classList.add('drag-over-tab');
+      }
+    });
+    wrap.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!tabDragSrc || tabDragSrc === wrap) return;
+      wrap.classList.remove('drag-over-tab');
+      const wraps = [...bar.querySelectorAll('.scenario-tab-wrap')];
+      const srcIdx = wraps.indexOf(tabDragSrc);
+      const tgtIdx = wraps.indexOf(wrap);
+      // Reorder in state
+      const [moved] = lang.scenarios.splice(srcIdx, 1);
+      lang.scenarios.splice(tgtIdx, 0, moved);
+      saveState();
+      renderScenarioTabs();
+    });
+
+    // ── TAB DRAG (touch) ──
+    let touchTabSrc = null, touchTabClone = null;
+    wrap.addEventListener('touchstart', e => {
+      touchTabSrc = wrap;
+    }, { passive: true });
+
+    wrap.addEventListener('touchmove', e => {
+      if (!touchTabSrc) return;
+      if (!touchTabClone) {
+        touchTabClone = wrap.cloneNode(true);
+        touchTabClone.style.cssText = `position:fixed;z-index:999;opacity:0.85;pointer-events:none;background:var(--ink);border-bottom:2px solid var(--gold);`;
+        document.body.appendChild(touchTabClone);
+        wrap.classList.add('dragging-tab');
+      }
+      const touch = e.touches[0];
+      touchTabClone.style.left = (touch.clientX - wrap.offsetWidth / 2) + 'px';
+      touchTabClone.style.top = (touch.clientY - 20) + 'px';
+
+      bar.querySelectorAll('.scenario-tab-wrap').forEach(w => w.classList.remove('drag-over-tab'));
+      const target = [...bar.querySelectorAll('.scenario-tab-wrap')].find(w => {
+        const r = w.getBoundingClientRect();
+        return touch.clientX >= r.left && touch.clientX <= r.right;
+      });
+      if (target && target !== wrap) target.classList.add('drag-over-tab');
+    }, { passive: true });
+
+    wrap.addEventListener('touchend', e => {
+      if (touchTabClone) { touchTabClone.remove(); touchTabClone = null; }
+      wrap.classList.remove('dragging-tab');
+      bar.querySelectorAll('.scenario-tab-wrap').forEach(w => w.classList.remove('drag-over-tab'));
+
+      if (!touchTabSrc) return;
+      const touch = e.changedTouches[0];
+      const target = [...bar.querySelectorAll('.scenario-tab-wrap')].find(w => {
+        const r = w.getBoundingClientRect();
+        return touch.clientX >= r.left && touch.clientX <= r.right && w !== touchTabSrc;
+      });
+      if (target) {
+        const wraps = [...bar.querySelectorAll('.scenario-tab-wrap')];
+        const srcIdx = wraps.indexOf(touchTabSrc);
+        const tgtIdx = wraps.indexOf(target);
+        const [moved] = lang.scenarios.splice(srcIdx, 1);
+        lang.scenarios.splice(tgtIdx, 0, moved);
+        saveState();
+        renderScenarioTabs();
+      }
+      touchTabSrc = null;
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(del);
+    bar.appendChild(wrap);
   });
+
   const addTab = document.createElement('button');
   addTab.className = 'scenario-add-tab';
   addTab.innerHTML = '＋';
